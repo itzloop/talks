@@ -1,0 +1,9 @@
+apiVersion: linuxfest.example.com/v2025
+kind: Pet
+metadata:
+  name: fluffy
+spec:
+  nickname: Fluffy
+  decayInterval: "10s"
+  # food: 0
+  # love: 0
