@@ -16,7 +16,14 @@ curl -XGET $KUBE_API_SERVER/api/v1/namespaces/kube-systes/pods
 ### API discovery
 
 ```bash
-curl -XGET $KUBE_API_SERVER/openapi/v2 > openapiv2.json
+curl -XGET $KUBE_API_SERVER/openapi/v2 | jq -c '                                              
+  .host = "192.168.49.2:8443" |
+  .schemes = ["https"] |
+  .basePath = "/"
+' > openapiv2.json
+
+k create token swagger-user -n default
+
 docker run --network host \
   -e SWAGGER_JSON=/swagger.json \
   -e CONFIG_URL=/swagger-config.yaml \
@@ -67,4 +74,5 @@ curl -XDELETE $KUBE_API_SERVER/apis/animals.example.com/v1/namespaces/default/pe
 ## Clean up 
 ```bash
 k delete -f crd.yaml -f fluffy.yaml
+rm -rf *json
 ```
