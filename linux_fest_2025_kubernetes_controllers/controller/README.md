@@ -6,7 +6,7 @@
 ```bash
 mkdir -p linux-fest-controller && cd linux-fest-controller
 kubebuilder init --domain=example.com --repo=github.com/itzloop/linux-fest-controller
-kubebuilder create api --group=aut --version=v2025 --kind=Sample
+kubebuilder create api --group=aut --version=v2025 --kind=MyKind
 ```
 
 - Installing CRDs
@@ -56,4 +56,37 @@ make uninstall
 
 ## Showcasing the demo controller
 
+- Show the CRD
 
+- Explain the Controller and Client
+
+- Make manifest
+
+```bash
+make manifests && make install
+```
+
+- The controller
+
+```bash
+make run
+```
+
+- The TUI
+
+```bash
+go run .
+```
+
+- Apply fluffy and barky
+
+```bash
+k apply -f fluffy.yaml
+k apply -f barky.yaml
+```
+
+- Show Events
+
+```bash
+k events
+```
