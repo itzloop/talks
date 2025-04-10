@@ -1,9 +1,0 @@
-apiVersion: animals.example.com/v1
-kind: Pet
-metadata:
-  name: fluffy
-spec:
-  name: Fluffy
-  foodDecayRate: 1
-  loveDecayRate: 1
-  decayInterval: "5s"

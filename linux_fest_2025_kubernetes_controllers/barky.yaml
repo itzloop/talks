@@ -1,9 +1,0 @@
-apiVersion: linuxfest.example.com/v2025
-kind: Pet
-metadata:
-  name: barky
-spec:
-  nickname: Barky
-  foodDecayRate: 10
-  loveDecayRate: 10
-  decayInterval: "1s"

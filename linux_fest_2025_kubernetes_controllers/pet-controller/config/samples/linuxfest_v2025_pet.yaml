@@ -1,9 +1,0 @@
-apiVersion: linuxfest.example.com/v2025
-kind: Pet
-metadata:
-  labels:
-    app.kubernetes.io/name: pet-controller
-    app.kubernetes.io/managed-by: kustomize
-  name: pet-sample
-spec:
-  # TODO(user): Add fields here

@@ -1,5 +1,0 @@
-## Append samples of your project ##
-resources:
-- linuxfest_2025_pet.yaml
-- linuxfest_v2025_pet.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples
