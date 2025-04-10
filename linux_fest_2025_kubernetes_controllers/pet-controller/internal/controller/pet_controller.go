@@ -19,11 +19,13 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -56,6 +58,7 @@ const (
 func (r *PetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
+	print("hello")
 	var pet linuxfestv2025.Pet
 	if err := r.Get(ctx, client.ObjectKey{Name: req.Name, Namespace: req.Namespace}, &pet); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -90,181 +93,107 @@ func (r *PetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	}
 
+	fmt.Println("Reconciling", pet.Name, "gen:", pet.Generation, "rv:", pet.ResourceVersion)
 	// ignore resouceVersion changes since we want to decay love and food
 	// at .spec.decayInterval intervals
-	if time.Since(pet.Status.ModifiedTime.Time) < pet.Spec.DecayInterval.Duration {
-		return ctrl.Result{}, nil
-	}
+	_, feedAnnot := pet.Annotations["linuxfest.example.com/feed"]
+	_, petAnnot := pet.Annotations["linuxfest.example.com/pet"]
 
-	fmt.Println("Reconciling", pet.Name, "gen:", pet.Generation, "rv:", pet.ResourceVersion)
-
-	if pet.Status.Food == 0 && pet.Status.Love == 0 {
+	if !feedAnnot && !petAnnot && time.Since(pet.Status.ModifiedTime.Time) < pet.Spec.DecayInterval.Duration {
 		return ctrl.Result{RequeueAfter: pet.Spec.DecayInterval.Duration}, nil
 	}
 
-	for range 10 {
-		petCopy := pet.DeepCopy()
-		if petCopy.Status.Food > petCopy.Spec.FoodDecayRate {
-			petCopy.Status.Food -= petCopy.Spec.FoodDecayRate
-		} else {
-			petCopy.Status.Food = 0
-		}
+	// if pet.Status.Food == 0 && pet.Status.Love == 0 {
+	// 	return ctrl.Result{RequeueAfter: pet.Spec.DecayInterval.Duration}, nil
+	// }
 
-		if petCopy.Status.Love > petCopy.Spec.LoveDecayRate {
-			petCopy.Status.Love -= petCopy.Spec.LoveDecayRate
-		} else {
-			petCopy.Status.Love = 0
-		}
+	// handle food and love increase by annotation
+	if feedAnnot || petAnnot {
+		var (
+			foodDelta, petDelta int
+			err                 error
+		)
 
-		petCopy.Status.ModifiedTime = v1.Now()
-
-		if err := r.Status().Update(ctx, petCopy); err != nil {
-			log.Error(err, "unable to update status")
-			if errors.IsConflict(err) {
-				if err := r.Get(ctx, client.ObjectKey{Name: req.Name, Namespace: req.Namespace}, &pet); err != nil {
-					return ctrl.Result{}, client.IgnoreNotFound(err)
-				}
-
-				continue
+		if feedAnnot {
+			foodDelta, err = strconv.Atoi(pet.Annotations["linuxfest.example.com/feed"])
+			if err != nil {
+				return ctrl.Result{}, err
 			}
 		}
 
-		fmt.Println(petCopy.Name, petCopy.Namespace, petCopy.Spec.DecayInterval, petCopy.Status)
-		return ctrl.Result{RequeueAfter: petCopy.Spec.DecayInterval.Duration}, nil
+		if petAnnot {
+			petDelta, err = strconv.Atoi(pet.Annotations["linuxfest.example.com/pet"])
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := r.Get(ctx, client.ObjectKey{Name: pet.Name, Namespace: pet.Namespace}, &pet); err != nil {
+				return client.IgnoreNotFound(err)
+
+			}
+
+			cpy := pet.DeepCopy()
+			delete(cpy.Annotations, "linuxfest.example.com/feed")
+			delete(cpy.Annotations, "linuxfest.example.com/pet")
+			return r.Update(ctx, cpy)
+		})
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		if foodDelta <= 0 && petDelta <= 0 {
+			return ctrl.Result{RequeueAfter: pet.Spec.DecayInterval.Duration}, nil
+		}
+
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := r.Get(ctx, client.ObjectKey{Name: pet.Name, Namespace: pet.Namespace}, &pet); err != nil {
+				return client.IgnoreNotFound(err)
+			}
+
+			cpy := pet.DeepCopy()
+			cpy.Status.Food += foodDelta
+			if cpy.Status.Food > 100 {
+				cpy.Status.Food = 100
+			}
+
+			cpy.Status.FedTime = v1.Now()
+
+			cpy.Status.Love += petDelta
+			if cpy.Status.Love > 100 {
+				cpy.Status.Love = 100
+			}
+			cpy.Status.PetTime = v1.Now()
+
+			return r.Status().Update(ctx, cpy)
+		})
+
+		return ctrl.Result{RequeueAfter: pet.Spec.DecayInterval.Duration}, err
 	}
 
-	// log.Info("requeuing pet", "pet_name", pet.Spec.Nickname, "requeue_after", pet.Spec.DecayInterval)
-	return ctrl.Result{RequeueAfter: pet.Spec.DecayInterval.Duration}, nil
-	// var petList linuxfestv2025.PetList
-	// if err := r.List(ctx, &petList); err != nil {
-	// 	return ctrl.Result{}, client.IgnoreNotFound(err)
-	// }
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := r.Get(ctx, client.ObjectKey{Name: pet.Name, Namespace: pet.Namespace}, &pet); err != nil {
+			return client.IgnoreNotFound(err)
+		}
 
-	// now := metav1.Now()
-	// var minInterval time.Duration = math.MaxInt64
-	// for _, pet := range petList.Items {
+		cpy := pet.DeepCopy()
+		if cpy.Status.Food > cpy.Spec.FoodDecayRate {
+			cpy.Status.Food -= cpy.Spec.FoodDecayRate
+		} else {
+			cpy.Status.Food = 0
+		}
+		if cpy.Status.Love > cpy.Spec.LoveDecayRate {
+			cpy.Status.Love -= cpy.Spec.LoveDecayRate
+		} else {
+			cpy.Status.Love = 0
+		}
+		cpy.Status.ModifiedTime = v1.Now()
 
-	// 	minInterval = min(minInterval, pet.Spec.DecayInterval.Duration)
+		return r.Status().Update(ctx, cpy)
+	})
+	return ctrl.Result{RequeueAfter: pet.Spec.DecayInterval.Duration}, err
 
-	// 	// Create a copy of the pet for processing
-	// 	petCopy := pet.DeepCopy()
-
-	// 	// Skip if pet is already dead
-	// 	if petCopy.Status.IsDead {
-	// 		if petCopy.Status.Food != 0 {
-	// 			petCopy.Status.IsDead = false
-	// 		} else {
-	// 			continue
-	// 		}
-	// 	} else {
-	// 		if petCopy.Status.Food == 0 && petCopy.Status.Love == 0 {
-	// 			petCopy.Status.Love = 100
-	// 		}
-
-	// 		if petCopy.Status.Food == 0 {
-	// 			petCopy.Status.Food = 100
-	// 		}
-
-	// 	}
-
-	// 	// Check if we need to decay food and love
-	// 	// Only decay if the pet hasn't been modified recently
-	// 	if petCopy.Status.ModifiedTime.IsZero() || time.Since(petCopy.Status.ModifiedTime.Time) >= pet.Spec.DecayInterval.Duration {
-	// 		// log.Info("modified time", "modified_time", petCopy.Status.ModifiedTime)
-	// 		// Decay food
-	// 		if petCopy.Status.Food > ZeroThreshold {
-	// 			petCopy.Status.Food -= petCopy.Spec.FoodDecayRate
-	// 			if petCopy.Status.Food < ZeroThreshold {
-	// 				petCopy.Status.Food = ZeroThreshold
-	// 			}
-	// 			// controllerModified = true
-	// 		}
-
-	// 		// Decay love
-	// 		if petCopy.Status.Love > ZeroThreshold {
-	// 			petCopy.Status.Love -= petCopy.Spec.LoveDecayRate
-	// 			if petCopy.Status.Love < ZeroThreshold {
-	// 				petCopy.Status.Love = ZeroThreshold
-	// 			}
-	// 			// controllerModified = true
-	// 		}
-
-	// 		// Update ModifiedTime if controller made changes
-	// 		petCopy.Status.ModifiedTime = now
-	// 		// // Check for attention needed events
-	// 		// if petCopy.Spec.Food <= LowThreshold || petCopy.Spec.Love <= LowThreshold {
-	// 		// 	log.Info("Pet needs attention (low resources)",
-	// 		// 		"pet", petCopy.Spec.Name,
-	// 		// 		"food", petCopy.Spec.Food,
-	// 		// 		"love", petCopy.Spec.Love)
-	// 		// } else if petCopy.Spec.Food <= MediumThreshold || petCopy.Spec.Love <= MediumThreshold {
-	// 		// 	log.Info("Pet needs attention (medium resources)",
-	// 		// 		"pet", petCopy.Spec.Name,
-	// 		// 		"food", petCopy.Spec.Food,
-	// 		// 		"love", petCopy.Spec.Love)
-	// 		// } else if petCopy.Spec.Food <= HighThreshold || petCopy.Spec.Love <= HighThreshold {
-	// 		// 	log.Info("Pet needs attention (high resources)",
-	// 		// 		"pet", petCopy.Spec.Name,
-	// 		// 		"food", petCopy.Spec.Food,
-	// 		// 		"love", petCopy.Spec.Love)
-	// 		// }
-	// 	}
-
-	// 	// Check for death
-	// 	if petCopy.Status.Food > ZeroThreshold {
-	// 		petCopy.Status.IsDead = false
-	// 	} else if petCopy.Status.Food == ZeroThreshold && petCopy.Status.Love == ZeroThreshold {
-	// 		petCopy.Status.IsDead = true
-	// 		log.Info("Pet has died",
-	// 			"pet", petCopy.Name,
-	// 			"nickname", petCopy.Spec.Nickname,
-	// 			"food", petCopy.Status.Food,
-	// 			"love", petCopy.Status.Love)
-	// 	}
-	// 	// Update the pet in the cluster if changes were made
-	// 	// if controllerModified || petCopy.Status.IsDead {
-	// 	// 	if err := r.Status().Update(ctx, petCopy); err != nil {
-	// 	// 		log.Error(err, "unable to update Pet")
-	// 	// 		return ctrl.Result{}, err
-	// 	// 	}
-	// 	// }
-
-	// 	name, ns := petCopy.Name, petCopy.Namespace
-	// 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-	// 		var pet v2025.Pet
-	// 		err := r.Get(ctx, types.NamespacedName{
-	// 			Name:      name,
-	// 			Namespace: ns,
-	// 		}, &pet)
-	// 		if err != nil {
-	// 			return err
-	// 		}
-
-	// 		return r.Status().Update(ctx, &pet)
-	// 	})
-	// 	if err != nil {
-	// 		log.Error(err, "unable to update status")
-	// 		continue
-	// 	}
-	// 	for range 10 {
-	// 		if err := r.Status().Update(ctx, petCopy); err != nil {
-	// 			log.Error(err, "unable to update status")
-	// 			if errors.IsConflict(err) {
-	// 				continue
-	// 			}
-	// 		}
-
-	// 		break
-	// 	}
-
-	// }
-
-	// Check if food or love was modified by another source
-	// If so, we don't update ModifiedTime
-	// controllerModified := false
-
-	// Requeue after interval
-	// return ctrl.Result{RequeueAfter: minInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

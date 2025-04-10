@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	v2025 "github.com/itzloop/pet-controller/api/v2025"
-	"k8s.io/apimachinery/pkg/api/errors"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -96,60 +96,34 @@ func SortPetsByAge(pets []v2025.Pet) {
 	})
 }
 
-func (m model) UpdatePet(petName string, ns string, food, love int) error {
-	if food > 100 || love > 100 || food < 0 || love < 0 {
-		return fmt.Errorf("invalid food=%d and love=%d values should be between 0 and 100", food, love)
-	}
+func (m model) UpdatePet(petName string, ns string, deltaFood, deltaPet int) error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		ctx := context.Background()
 
-	ctx := context.Background()
+		var pet v2025.Pet
+		if err := m.k8s.Get(ctx, client.ObjectKey{Name: petName, Namespace: ns}, &pet); err != nil {
+			fmt.Println(err)
+			return client.IgnoreNotFound(err)
+		}
 
-	var pet v2025.Pet
-	err := m.k8s.Get(ctx, client.ObjectKey{
-		Name:      petName,
-		Namespace: ns,
-	}, &pet)
-	if err != nil {
-		return err
-	}
-
-	for range 10 {
 		petCopy := pet.DeepCopy()
 		// Modify the spec values
-		if food != 0 {
-			petCopy.Status.Food = food
-			petCopy.Status.FedTime = v1.Now()
+		if deltaFood != 0 {
+			petCopy.Annotations["linuxfest.example.com/feed"] = strconv.Itoa(deltaFood)
 		}
 
-		if love != 0 {
-			petCopy.Status.Love = love
-			petCopy.Status.PetTime = v1.Now()
+		if deltaPet != 0 {
+			petCopy.Annotations["linuxfest.example.com/pet"] = strconv.Itoa(deltaPet)
 		}
 
-		if food == 0 && love == 0 {
+		if deltaFood == 0 && deltaPet == 0 {
 			return nil
 		}
 
-        petCopy.Annotations["fed"] = "true"
-        petCopy.Annotations["loved"] = "true"
+		return m.k8s.Update(ctx, petCopy)
+	})
 
-		if err := m.k8s.Update(ctx, petCopy); err != nil {
-			if errors.IsConflict(err) {
-				if err := m.k8s.Get(ctx, client.ObjectKey{Name: petCopy.Name, Namespace: pet.Namespace}, &pet); err != nil {
-					return err
-				}
-
-				continue
-			} else if errors.IsNotFound(err) {
-				return nil
-			}
-
-			return err
-		}
-
-		return nil
-	}
-
-	return nil
+	return err
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -191,27 +165,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "f", "F":
-			m.pets[m.cursor].Status.Food += 10
+			var delta = 10
 			if msg.String() == "F" {
-				m.pets[m.cursor].Status.Food = 100
+				delta = 100
 			}
+			m.pets[m.cursor].Status.Food += delta
 			if m.pets[m.cursor].Status.Food > 100 {
 				m.pets[m.cursor].Status.Food = 100
 			}
 			pet := m.pets[m.cursor]
-			if err := m.UpdatePet(pet.Name, pet.Namespace, pet.Status.Food, 0); err != nil {
+			if err := m.UpdatePet(pet.Name, pet.Namespace, 10, 0); err != nil {
 				return m, func() tea.Msg { return errMsg{fmt.Errorf("failed to update pet: %w", err)} }
 			}
 		case "l", "L":
-			m.pets[m.cursor].Status.Love += 10
-			if msg.String() == "L" {
-				m.pets[m.cursor].Status.Love = 100
+			var delta = 10
+			if msg.String() == "F" {
+				delta = 100
 			}
+			m.pets[m.cursor].Status.Love += delta
 			if m.pets[m.cursor].Status.Love > 100 {
 				m.pets[m.cursor].Status.Love = 100
 			}
 			pet := m.pets[m.cursor]
-			if err := m.UpdatePet(pet.Name, pet.Namespace, 0, pet.Status.Love); err != nil {
+			if err := m.UpdatePet(pet.Name, pet.Namespace, 0, 10); err != nil {
 				return m, func() tea.Msg { return errMsg{fmt.Errorf("failed to update pet: %w", err)} }
 			}
 		}
