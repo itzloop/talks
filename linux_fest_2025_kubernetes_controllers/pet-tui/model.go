@@ -129,7 +129,10 @@ func (m model) UpdatePet(petName string, ns string, food, love int) error {
 			return nil
 		}
 
-		if err := m.k8s.Status().Update(ctx, petCopy); err != nil {
+        petCopy.Annotations["fed"] = "true"
+        petCopy.Annotations["loved"] = "true"
+
+		if err := m.k8s.Update(ctx, petCopy); err != nil {
 			if errors.IsConflict(err) {
 				if err := m.k8s.Get(ctx, client.ObjectKey{Name: petCopy.Name, Namespace: pet.Namespace}, &pet); err != nil {
 					return err
